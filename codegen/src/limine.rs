@@ -1,0 +1,3 @@
+pub const COMMON_MAGIC: [u64; 2] = [0xc7b1dd30df4c8b88, 0x0a82e883a194f07b];
+pub const BOOTLOADER_INFO_REQUEST: [u64; 2] = [0xf55038d8e2a1202f, 0x279426fcf5f59740];
+pub const TERMINAL_REQUEST: [u64; 2] = [0xc8ac59310c2b0844, 0xa68d0c7265d38878];

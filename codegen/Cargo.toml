@@ -6,3 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+# I will make an exception to my zero-dependency rule for bytemuck,
+# an excellent crate for safely converting POD structs to and from bytes.
+# This is very useful for reading and writing ELF and limine, whose specs are
+# written in terms of C structs.
+bytemuck = { version = "1.12", features = ["derive"] }
