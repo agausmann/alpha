@@ -81,8 +81,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     strlen_loop.extend([0x48, 0xFF, 0xC2]);
 
     let loop_start = code.len() as isize;
-    // cmp qword ptr [rsi + rdx], 0
-    code.extend([0x48, 0x83, 0x3C, 0x16, 0x00]);
+    // cmp byte ptr [rsi + rdx], 0
+    code.extend([0x80, 0x3C, 0x16, 0x00]);
     // je loop_end
     {
         let target = strlen_loop.len() as isize + 2;
