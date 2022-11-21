@@ -8,13 +8,22 @@ use elf64::{
 pub mod elf64;
 pub mod limine;
 
+fn align_up(x: u64, y: u64) -> u64 {
+    if x == 0 {
+        0
+    } else {
+        (1 + (x - 1) / y) * y
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let start_vaddr = 0xffffffff_80000000_u64;
 
     let program_header_offset = FILE_HEADER_SIZE as u64;
-    let data_offset = program_header_offset + 2 * PROGRAM_HEADER_SIZE as u64;
+    let program_header_end = program_header_offset + 2 * PROGRAM_HEADER_SIZE as u64;
+    let data_offset = align_up(program_header_end, 1 << 12);
 
-    let data_vaddr = start_vaddr + data_offset;
+    let data_vaddr = start_vaddr;
     let mut data: Vec<u8> = Vec::new();
 
     let req_vaddr = data_vaddr + data.len() as u64;
@@ -160,6 +169,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut file = File::create("kernel.elf")?;
     file.write_all(bytemuck::bytes_of(&file_header))?;
     file.write_all(bytemuck::bytes_of(&program_headers))?;
+    let padding = vec![0; (data_offset - program_header_end) as usize];
+    file.write_all(&padding)?;
     file.write_all(&data)?;
     file.write_all(&code)?;
 
