@@ -35,9 +35,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     data.extend(bytemuck::bytes_of(&limine::COMMON_MAGIC));
     data.extend(bytemuck::bytes_of(&limine::TERMINAL_REQUEST));
     data.extend(0u64.to_le_bytes()); // Revision
-    data.extend(0u64.to_le_bytes()); // Callback
     let terminal_response_vaddr = req_vaddr + data.len() as u64;
     data.extend(0u64.to_le_bytes()); // Response
+    data.extend(0u64.to_le_bytes()); // Callback
 
     data.extend(bytemuck::bytes_of(&limine::COMMON_MAGIC));
     data.extend(bytemuck::bytes_of(&limine::BOOTLOADER_INFO_REQUEST));
