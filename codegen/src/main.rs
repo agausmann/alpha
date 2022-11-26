@@ -51,6 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut asm = x86::Assembler::new();
     asm.label("halt");
+    asm.push(HLT);
     asm.push(JMP(Label("halt")));
 
     asm.label("entry");

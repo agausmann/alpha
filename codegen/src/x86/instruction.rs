@@ -258,6 +258,15 @@ pub trait Instruction<'a> {
     fn encode(&self) -> InstructionBuilder<'a>;
 }
 
+pub struct HLT;
+
+impl<'a> Instruction<'a> for HLT {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // F4 | HLT
+        InstructionBuilder::new().opcode(0xf4)
+    }
+}
+
 pub struct JMP<Target>(pub Target);
 
 impl<'a> Instruction<'a> for JMP<Label<'a>> {
