@@ -46,23 +46,43 @@ fn main() -> Result<(), Box<dyn Error>> {
     let info_response_vaddr = data_vaddr + data.len() as u64;
     data.extend(0u64.to_le_bytes()); // Response
 
+    let hello_vaddr = data_vaddr + data.len() as u64;
+    data.extend(b"Hello \0");
+
+    let space_vaddr = data_vaddr + data.len() as u64;
+    data.extend(b" \0");
+
     let code_vaddr = data_vaddr + data.len() as u64 + (1 << 12);
     let code_offset = data_offset + data.len() as u64;
 
     let mut asm = x86::Assembler::new();
-    asm.label("halt");
-    asm.push(HLT);
-    asm.push(JMP(Label("halt")));
 
+    // Entrypoint
     asm.label("entry");
 
-    asm.push(MOV(RSI, info_response_vaddr));
-    asm.push(MOV(RSI, Indirect(RSI)));
-    asm.push(TEST(RSI, RSI));
+    asm.push(MOV(RBX, info_response_vaddr));
+    asm.push(MOV(RBX, Indirect(RBX)));
+    asm.push(TEST(RBX, RBX));
     asm.push(JZ(Label("halt")));
 
+    asm.push(MOV(RSI, hello_vaddr));
+    asm.push(CALL(Label("print")));
+
     // .name
-    asm.push(MOV(RSI, Index(RSI, 8i8)));
+    asm.push(MOV(RSI, Index(RBX, 8i8)));
+    asm.push(CALL(Label("print")));
+
+    asm.push(MOV(RSI, space_vaddr));
+    asm.push(CALL(Label("print")));
+
+    // .version
+    asm.push(MOV(RSI, Index(RBX, 16i8)));
+    asm.push(CALL(Label("print")));
+
+    asm.push(JMP(Label("halt")));
+
+    // Print procedure
+    asm.label("print");
 
     // String length
     asm.push(XOR(RDX, RDX));
@@ -91,6 +111,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     // .write
     asm.push(MOV(RAX, Index(RAX, 24i8)));
     asm.push(CALL(RAX));
+
+    asm.push(RET);
+
+    // Halt procedure
+    asm.label("halt");
+    asm.push(HLT);
     asm.push(JMP(Label("halt")));
 
     let code = asm.finish();

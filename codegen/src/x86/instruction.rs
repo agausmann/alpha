@@ -287,6 +287,13 @@ impl<'a> Instruction<'a> for JZ<Label<'a>> {
 
 pub struct CALL<Target>(pub Target);
 
+impl<'a> Instruction<'a> for CALL<Label<'a>> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // E8 cd | CALL rel32
+        InstructionBuilder::new().opcode(0xe8).rel32(self.0)
+    }
+}
+
 impl<'a> Instruction<'a> for CALL<R64> {
     fn encode(&self) -> InstructionBuilder<'a> {
         // FF /2 | CALL r/m64
@@ -295,6 +302,15 @@ impl<'a> Instruction<'a> for CALL<R64> {
             .reg_const(2)
             .mod_(0b11)
             .rm_reg(self.0)
+    }
+}
+
+pub struct RET;
+
+impl<'a> Instruction<'a> for RET {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // C3 | RET
+        InstructionBuilder::new().opcode(0xc3)
     }
 }
 
