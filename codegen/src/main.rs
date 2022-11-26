@@ -4,9 +4,11 @@ use elf64::{
     file_header::{FileHeader, FILE_HEADER_SIZE},
     program::{Phdr, PF_R, PF_W, PF_X, PROGRAM_HEADER_SIZE, PT_LOAD},
 };
+use x86::{address::*, instruction::*, register::R64::*, Label};
 
 pub mod elf64;
 pub mod limine;
+pub mod x86;
 
 fn align_up(x: u64, y: u64) -> u64 {
     if x == 0 {
@@ -26,7 +28,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let data_vaddr = start_vaddr;
     let mut data: Vec<u8> = Vec::new();
 
-    let req_vaddr = data_vaddr + data.len() as u64;
     // Align to 8 bytes
     while (data_vaddr + data.len() as u64) % 8 != 0 {
         data.push(0);
@@ -35,111 +36,67 @@ fn main() -> Result<(), Box<dyn Error>> {
     data.extend(bytemuck::bytes_of(&limine::COMMON_MAGIC));
     data.extend(bytemuck::bytes_of(&limine::TERMINAL_REQUEST));
     data.extend(0u64.to_le_bytes()); // Revision
-    let terminal_response_vaddr = req_vaddr + data.len() as u64;
+    let terminal_response_vaddr = data_vaddr + data.len() as u64;
     data.extend(0u64.to_le_bytes()); // Response
     data.extend(0u64.to_le_bytes()); // Callback
 
     data.extend(bytemuck::bytes_of(&limine::COMMON_MAGIC));
     data.extend(bytemuck::bytes_of(&limine::BOOTLOADER_INFO_REQUEST));
     data.extend(0u64.to_le_bytes()); // Revision
-    let info_response_vaddr = req_vaddr + data.len() as u64;
+    let info_response_vaddr = data_vaddr + data.len() as u64;
     data.extend(0u64.to_le_bytes()); // Response
 
     let code_vaddr = data_vaddr + data.len() as u64 + (1 << 12);
     let code_offset = data_offset + data.len() as u64;
-    let mut code: Vec<u8> = Vec::new();
 
-    let halt_rel = code.len() as isize;
-    // jmp halt (infinite loop)
-    code.extend([0xeb, 0xfe]);
+    let mut asm = x86::Assembler::new();
+    asm.label("halt");
+    asm.push(JMP(Label("halt")));
 
-    let entry = code_vaddr + code.len() as u64;
-    // mov rsi, [info_response]
-    code.extend([0x48, 0x8B, 0x34, 0x25]);
-    code.extend(&info_response_vaddr.to_le_bytes()[..4]);
+    asm.label("entry");
 
-    // test rsi, rsi
-    code.extend([0x48, 0x85, 0xF6]);
+    asm.push(MOV(RSI, info_response_vaddr));
+    asm.push(MOV(RSI, Indirect(RSI)));
+    asm.push(TEST(RSI, RSI));
+    asm.push(JZ(Label("halt")));
 
-    // jz halt
-    {
-        let end = code.len() as isize + 2;
-        code.extend([0x74, i8::try_from(halt_rel - end).unwrap() as u8]);
-    }
-
-    // mov rsi, [rsi + 8] (name)
-    code.extend([0x48, 0x8B, 0x76, 0x08]);
+    // .name
+    asm.push(MOV(RSI, Index(RSI, 8i8)));
 
     // String length
-
-    // xor rdx, rdx
-    code.extend([0x48, 0x31, 0xd2]);
-
-    // Loop body
-    let mut strlen_loop: Vec<u8> = Vec::new();
-    // inc rdx
-    strlen_loop.extend([0x48, 0xFF, 0xC2]);
-
-    let loop_start = code.len() as isize;
-    // cmp byte ptr [rsi + rdx], 0
-    code.extend([0x80, 0x3C, 0x16, 0x00]);
-    // je loop_end
-    {
-        let target = strlen_loop.len() as isize + 2;
-        code.extend([0x74, i8::try_from(target).unwrap() as u8]);
-    }
-    code.extend(strlen_loop);
-    // jmp loop_start
-    {
-        let end = code.len() as isize + 2;
-        code.extend([0xeb, i8::try_from(loop_start - end).unwrap() as u8]);
-    }
+    asm.push(XOR(RDX, RDX));
+    asm.label("strlen_top");
+    asm.push(CMP(Index(RSI, RDX), 0u8));
+    asm.push(JZ(Label("strlen_bottom")));
+    asm.push(INC(RDX));
+    asm.push(JMP(Label("strlen_top")));
+    asm.label("strlen_bottom");
 
     // Terminal write
-    // mov rax, [terminal_response]
-    code.extend([0x48, 0x8B, 0x04, 0x25]);
-    code.extend(&terminal_response_vaddr.to_le_bytes()[..4]);
+    asm.push(MOV(RAX, terminal_response_vaddr));
+    asm.push(MOV(RAX, Indirect(RAX)));
+    asm.push(TEST(RAX, RAX));
+    asm.push(JZ(Label("halt")));
 
-    // test rax, rax
-    code.extend([0x48, 0x85, 0xC0]);
+    // .terminal_count
+    asm.push(MOV(RDI, Index(RAX, 8i8)));
+    asm.push(TEST(RDI, RDI));
+    asm.push(JZ(Label("halt")));
+    // .terminals
+    asm.push(MOV(RDI, Index(RAX, 16i8)));
+    // [0]
+    asm.push(MOV(RDI, Indirect(RDI)));
 
-    // jz halt
-    {
-        let end = code.len() as isize + 2;
-        code.extend([0x74, i8::try_from(halt_rel - end).unwrap() as u8]);
-    }
+    // .write
+    asm.push(MOV(RAX, Index(RAX, 24i8)));
+    asm.push(CALL(RAX));
+    asm.push(JMP(Label("halt")));
 
-    // mov rdi, [rax + 8] (terminal_count)
-    code.extend([0x48, 0x8B, 0x78, 0x08]);
-    // test rdi, rdi
-    code.extend([0x48, 0x85, 0xFF]);
-    // jz halt
-    {
-        let end = code.len() as isize + 2;
-        code.extend([0x74, i8::try_from(halt_rel - end).unwrap() as u8]);
-    }
-
-    // mov rdi, [rax + 16] (terminals)
-    code.extend([0x48, 0x8B, 0x78, 0x10]);
-    // mov rdi, [rdi] (terminals[0])
-    code.extend([0x48, 0x8B, 0x3F]);
-    // mov rax, [rax + 24] (write)
-    code.extend([0x48, 0x8B, 0x40, 0x18]);
-    // call rax
-    code.extend([0xFF, 0xD0]);
-
-    // jmp halt
-    {
-        let end = code.len() + 2;
-        code.extend([
-            0xeb,
-            i8::try_from(halt_rel as isize - end as isize).unwrap() as u8,
-        ]);
-    }
+    let code = asm.finish();
 
     let mut file_header = FileHeader::new();
     file_header.e_machine = 0x3e; // x86_64
-    file_header.e_entry = entry;
+    file_header.e_entry = code_vaddr + u64::try_from(code.label("entry")).unwrap();
     file_header.e_phnum = 2;
     file_header.e_phoff = program_header_offset;
 
@@ -160,8 +117,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             p_offset: code_offset,
             p_vaddr: code_vaddr,
             p_paddr: code_vaddr,
-            p_filesz: code.len() as u64,
-            p_memsz: code.len() as u64,
+            p_filesz: code.bytes().len() as u64,
+            p_memsz: code.bytes().len() as u64,
             p_align: 1 << 12,
         },
     ];
@@ -172,7 +129,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let padding = vec![0; (data_offset - program_header_end) as usize];
     file.write_all(&padding)?;
     file.write_all(&data)?;
-    file.write_all(&code)?;
+    file.write_all(code.bytes())?;
 
     Ok(())
 }
