@@ -4,7 +4,12 @@ use elf64::{
     file_header::{FileHeader, FILE_HEADER_SIZE},
     program::{Phdr, PF_R, PF_W, PF_X, PROGRAM_HEADER_SIZE, PT_LOAD},
 };
-use x86::{address::*, instruction::*, register::R64::*, Label};
+use x86::{
+    address::*,
+    instruction::*,
+    register::{R64::*, R8::*},
+    Label,
+};
 
 pub mod elf64;
 pub mod limine;
@@ -52,6 +57,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let space_vaddr = data_vaddr + data.len() as u64;
     data.extend(b" \0");
 
+    let tohex_lookup_vaddr = data_vaddr + data.len() as u64;
+    data.extend(b"0123456789abcdef");
+
+    let tohex_buffer_vaddr = data_vaddr + data.len() as u64;
+    const TOHEX_BUFFER_LEN: usize = 32;
+    data.extend([0; TOHEX_BUFFER_LEN]);
+
     let code_vaddr = data_vaddr + data.len() as u64 + (1 << 12);
     let code_offset = data_offset + data.len() as u64;
 
@@ -79,9 +91,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     asm.push(MOV(RSI, Index(RBX, 16i8)));
     asm.push(CALL(Label("print")));
 
+    asm.push(MOV(RSI, space_vaddr));
+    asm.push(CALL(Label("print")));
+
+    asm.push(MOV(RDI, 0xdeadbeef_u64));
+    asm.push(CALL(Label("tohex")));
+    asm.push(MOV(RSI, RAX));
+    asm.push(CALL(Label("print")));
+
     asm.push(JMP(Label("halt")));
 
     // Print procedure
+    // - RSI - String to print
     asm.label("print");
 
     // String length
@@ -112,6 +133,35 @@ fn main() -> Result<(), Box<dyn Error>> {
     asm.push(MOV(RAX, Index(RAX, 24i8)));
     asm.push(CALL(RAX));
 
+    asm.push(RET);
+
+    // Integer to hex string
+    // - RDI - 64-bit integer value to format
+    // - Output - RAX - Pointer to null-terminated string
+    // Pointer only contains valid data until next call
+    asm.label("tohex");
+    // TODO relax RCX to a smaller register size
+    asm.push(MOV(RCX, 64));
+    asm.push(MOV(R9, tohex_buffer_vaddr));
+    asm.push(MOV(R10, tohex_lookup_vaddr));
+
+    asm.label("tohex_top");
+    asm.push(TEST(RCX, RCX));
+    asm.push(JZ(Label("tohex_bottom")));
+    asm.push(SUB(RCX, 4i8));
+
+    asm.push(MOV(R11, RDI));
+    asm.push(SHR(R11, CL));
+    asm.push(AND(R11, 0x0f_i8));
+    asm.push(MOV(R11B, Index(R11, R10)));
+    asm.push(MOV(Indirect(R9), R11B));
+
+    asm.push(INC(R9));
+    asm.push(JMP(Label("tohex_top")));
+    asm.label("tohex_bottom");
+
+    asm.push(MOV(Indirect(R9), 0u8));
+    asm.push(MOV(RAX, tohex_buffer_vaddr));
     asm.push(RET);
 
     // Halt procedure

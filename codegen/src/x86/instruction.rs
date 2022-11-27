@@ -1,6 +1,6 @@
 use super::{
     address::{Index, Indirect},
-    register::R64,
+    register::{Register, R64, R8},
     Label, Reference, ReferenceFormat,
 };
 
@@ -46,7 +46,7 @@ impl<'a> InstructionBuilder<'a> {
         }
     }
 
-    pub fn op_reg(self, reg: R64) -> Self {
+    pub fn op_reg<R: Register>(self, reg: R) -> Self {
         Self {
             rex: self.rex | reg.rex_b(),
             opcode: [
@@ -65,7 +65,7 @@ impl<'a> InstructionBuilder<'a> {
         }
     }
 
-    pub fn reg(self, reg: R64) -> Self {
+    pub fn reg<R: Register>(self, reg: R) -> Self {
         Self {
             rex: self.rex | reg.rex_r(),
             modrm: Some(self.modrm.unwrap_or(0x00) | reg.in_reg()),
@@ -80,7 +80,7 @@ impl<'a> InstructionBuilder<'a> {
         }
     }
 
-    pub fn rm_reg(self, reg: R64) -> Self {
+    pub fn rm_reg<R: Register>(self, reg: R) -> Self {
         Self {
             rex: self.rex | reg.rex_b(),
             modrm: Some(self.modrm.unwrap_or(0x00) | reg.in_rm()),
@@ -123,6 +123,10 @@ impl<'a> InstructionBuilder<'a> {
             immediate: Some(immediate.into()),
             ..self
         }
+    }
+
+    pub fn rm_literal(self, reg: R64) -> Self {
+        self.mod_(0b11).rm_reg(reg)
     }
 
     pub fn indirect(self, indirect: Indirect<R64>) -> Self {
@@ -300,8 +304,7 @@ impl<'a> Instruction<'a> for CALL<R64> {
         InstructionBuilder::new()
             .opcode(0xff)
             .reg_const(2)
-            .mod_(0b11)
-            .rm_reg(self.0)
+            .rm_literal(self.0)
     }
 }
 
@@ -311,19 +314,6 @@ impl<'a> Instruction<'a> for RET {
     fn encode(&self) -> InstructionBuilder<'a> {
         // C3 | RET
         InstructionBuilder::new().opcode(0xc3)
-    }
-}
-
-pub struct CMP<A, B>(pub A, pub B);
-
-impl<'a> Instruction<'a> for CMP<Index<R64, R64>, u8> {
-    fn encode(&self) -> InstructionBuilder<'a> {
-        // 80 /7 ib | CMP r/m8, imm8
-        InstructionBuilder::new()
-            .opcode(0x80)
-            .reg_const(7)
-            .indexed_indirect(self.0)
-            .immediate(self.1)
     }
 }
 
@@ -337,6 +327,17 @@ impl<'a> Instruction<'a> for MOV<R64, u64> {
             .opcode(0xb8)
             .op_reg(self.0)
             .immediate(self.1)
+    }
+}
+
+impl<'a> Instruction<'a> for MOV<R64, R64> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // REX.W + 8B /r | MOV r64,r/m64
+        InstructionBuilder::new()
+            .rex_w()
+            .opcode(0x8b)
+            .reg(self.0)
+            .rm_literal(self.1)
     }
 }
 
@@ -358,9 +359,98 @@ impl<'a> Instruction<'a> for MOV<R64, Index<R64, i8>> {
             .rex_w()
             .opcode(0x8b)
             .reg(self.0)
+            // TODO builder method
             .mod_(0b01)
             .rm_reg(self.1 .0)
             .displacement(self.1 .1)
+    }
+}
+
+impl<'a> Instruction<'a> for MOV<R64, Index<R64, R64>> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // REX.W + 8B /r | MOV r64,r/m64
+        InstructionBuilder::new()
+            .rex_w()
+            .opcode(0x8b)
+            .reg(self.0)
+            .indexed_indirect(self.1)
+    }
+}
+
+impl<'a> Instruction<'a> for MOV<R8, Index<R64, R64>> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // 8A /r | MOV r8,r/m8
+        // FIXME In 64-bit mode, r/m8 can not be encoded to access the
+        // following byte registers if a REX prefix is used: AH, BH, CH, DH.
+        InstructionBuilder::new()
+            .opcode(0x8a)
+            .reg(self.0)
+            .indexed_indirect(self.1)
+    }
+}
+
+impl<'a> Instruction<'a> for MOV<Indirect<R64>, R64> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // REX.W + 89 /r | MOV r/m64,r64
+        InstructionBuilder::new()
+            .rex_w()
+            .opcode(0x89)
+            .indirect(self.0)
+            .reg(self.1)
+    }
+}
+
+impl<'a> Instruction<'a> for MOV<Indirect<R64>, R8> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // 88 /r | MOV r/m8,r8
+        // FIXME In 64-bit mode, r/m8 can not be encoded to access the
+        // following byte registers if a REX prefix is used: AH, BH, CH, DH.
+        InstructionBuilder::new()
+            .opcode(0x88)
+            .indirect(self.0)
+            .reg(self.1)
+    }
+}
+
+impl<'a> Instruction<'a> for MOV<Indirect<R64>, u8> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // C6 /0 ib | MOV r/m8, imm8
+        // FIXME In 64-bit mode, r/m8 can not be encoded to access the
+        // following byte registers if a REX prefix is used: AH, BH, CH, DH.
+        InstructionBuilder::new()
+            .rex_w()
+            .opcode(0xc6)
+            .reg_const(0)
+            .indirect(self.0)
+            .immediate(self.1)
+    }
+}
+
+pub struct SUB<Dst, Src>(pub Dst, pub Src);
+
+impl<'a> Instruction<'a> for SUB<R64, i8> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // 80 /5 ib | SUB r/m8, imm8
+        // FIXME In 64-bit mode, r/m8 can not be encoded to access the
+        // following byte registers if a REX prefix is used: AH, BH, CH, DH.
+        InstructionBuilder::new()
+            .opcode(0x80)
+            .reg_const(5)
+            .rm_literal(self.0)
+            .immediate(self.1)
+    }
+}
+
+pub struct CMP<A, B>(pub A, pub B);
+
+impl<'a> Instruction<'a> for CMP<Index<R64, R64>, u8> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // 80 /7 ib | CMP r/m8, imm8
+        InstructionBuilder::new()
+            .opcode(0x80)
+            .reg_const(7)
+            .indexed_indirect(self.0)
+            .immediate(self.1)
     }
 }
 
@@ -372,9 +462,22 @@ impl<'a> Instruction<'a> for TEST<R64, R64> {
         InstructionBuilder::new()
             .rex_w()
             .opcode(0x85)
-            .mod_(0b11)
-            .rm_reg(self.0)
+            .rm_literal(self.0)
             .reg(self.1)
+    }
+}
+
+pub struct AND<Dst, Src>(pub Dst, pub Src);
+
+impl<'a> Instruction<'a> for AND<R64, i8> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // REX.W + 83 /4 ib | AND r/m64, imm8
+        InstructionBuilder::new()
+            .rex_w()
+            .opcode(0x83)
+            .reg_const(4)
+            .rm_literal(self.0)
+            .immediate(self.1)
     }
 }
 
@@ -386,9 +489,22 @@ impl<'a> Instruction<'a> for XOR<R64, R64> {
         InstructionBuilder::new()
             .rex_w()
             .opcode(0x33)
-            .mod_(0b11)
             .reg(self.0)
-            .rm_reg(self.1)
+            .rm_literal(self.1)
+    }
+}
+
+pub struct SHR<Dst, Amt>(pub Dst, pub Amt);
+
+impl<'a> Instruction<'a> for SHR<R64, R8> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // REX.W + D3 /5 | SHR r/m64, CL
+        assert!(self.1 == R8::CL, "shift amount must be in CL register");
+        InstructionBuilder::new()
+            .rex_w()
+            .opcode(0xd3)
+            .reg_const(5)
+            .rm_literal(self.0)
     }
 }
 
@@ -401,7 +517,6 @@ impl<'a> Instruction<'a> for INC<R64> {
             .rex_w()
             .opcode(0xff)
             .reg_const(0)
-            .mod_(0b11)
-            .rm_reg(self.0)
+            .rm_literal(self.0)
     }
 }
