@@ -1,8 +1,8 @@
 use super::{
     address::{Index, Indirect},
     register::{Register, R64, R8},
-    Label, Reference, ReferenceFormat,
 };
+use crate::link::{Label, Ptr, Reference, ReferenceFormat};
 
 pub struct InstructionBuilder<'a> {
     prefixes: Vec<u8>,
@@ -147,6 +147,11 @@ impl<'a> InstructionBuilder<'a> {
     pub fn rel32(self, label: Label<'a>) -> Self {
         self.displacement(0i32)
             .reference(label, ReferenceFormat::Rel32)
+    }
+
+    pub fn ptr(self, ptr: Ptr<'a>) -> Self {
+        self.immediate(0u64)
+            .reference(Label(ptr.0), ReferenceFormat::Abs64)
     }
 
     pub fn serialize<'b>(&'b self) -> impl IntoIterator<Item = u8> + 'b {
@@ -327,6 +332,17 @@ impl<'a> Instruction<'a> for MOV<R64, u64> {
             .opcode(0xb8)
             .op_reg(self.0)
             .immediate(self.1)
+    }
+}
+
+impl<'a> Instruction<'a> for MOV<R64, Ptr<'a>> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // REX.W + B8+ rd io | MOV r64, imm64
+        InstructionBuilder::new()
+            .rex_w()
+            .opcode(0xb8)
+            .op_reg(self.0)
+            .ptr(self.1)
     }
 }
 

@@ -1,18 +1,16 @@
 use std::{error::Error, fs::File, io::Write};
 
-use elf64::{
-    file_header::{FileHeader, FILE_HEADER_SIZE},
-    program::{Phdr, PF_R, PF_W, PF_X, PROGRAM_HEADER_SIZE, PT_LOAD},
-};
+use elf64::program::{PF_R, PF_W, PF_X};
+use link::{ElfLinker, Label, Ptr, ReferenceFormat, Segment};
 use x86::{
     address::*,
     instruction::*,
     register::{R64::*, R8::*},
-    Label,
 };
 
 pub mod elf64;
 pub mod limine;
+pub mod link;
 pub mod x86;
 
 fn align_up(x: u64, y: u64) -> u64 {
@@ -24,74 +22,55 @@ fn align_up(x: u64, y: u64) -> u64 {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let start_vaddr = 0xffffffff_80000000_u64;
+    let mut data = Segment::new();
 
-    let program_header_offset = FILE_HEADER_SIZE as u64;
-    let program_header_end = program_header_offset + 2 * PROGRAM_HEADER_SIZE as u64;
-    let data_offset = align_up(program_header_end, 1 << 12);
+    data.align(8);
 
-    let data_vaddr = start_vaddr;
-    let mut data: Vec<u8> = Vec::new();
+    data.offset_label(limine::RESPONSE_OFFSET, "terminal_response");
+    data.append(&limine::Request::new(limine::TERMINAL_REQUEST, 0));
+    data.append_reference("terminal_callback", ReferenceFormat::Abs64);
 
-    // Align to 8 bytes
-    while (data_vaddr + data.len() as u64) % 8 != 0 {
-        data.push(0);
-    }
+    data.offset_label(limine::RESPONSE_OFFSET, "bootloader_info_response");
+    data.append(&limine::Request::new(limine::BOOTLOADER_INFO_REQUEST, 0));
 
-    data.extend(bytemuck::bytes_of(&limine::COMMON_MAGIC));
-    data.extend(bytemuck::bytes_of(&limine::TERMINAL_REQUEST));
-    data.extend(0u64.to_le_bytes()); // Revision
-    let terminal_response_vaddr = data_vaddr + data.len() as u64;
-    data.extend(0u64.to_le_bytes()); // Response
-    data.extend(0u64.to_le_bytes()); // Callback
+    data.label("str_hello");
+    data.append(b"Hello \0");
 
-    data.extend(bytemuck::bytes_of(&limine::COMMON_MAGIC));
-    data.extend(bytemuck::bytes_of(&limine::BOOTLOADER_INFO_REQUEST));
-    data.extend(0u64.to_le_bytes()); // Revision
-    let info_response_vaddr = data_vaddr + data.len() as u64;
-    data.extend(0u64.to_le_bytes()); // Response
+    data.label("str_space");
+    data.append(b" \0");
 
-    let hello_vaddr = data_vaddr + data.len() as u64;
-    data.extend(b"Hello \0");
+    data.label("tohex_lut");
+    data.append(b"0123456789abcdef");
 
-    let space_vaddr = data_vaddr + data.len() as u64;
-    data.extend(b" \0");
-
-    let tohex_lookup_vaddr = data_vaddr + data.len() as u64;
-    data.extend(b"0123456789abcdef");
-
-    let tohex_buffer_vaddr = data_vaddr + data.len() as u64;
-    const TOHEX_BUFFER_LEN: usize = 32;
-    data.extend([0; TOHEX_BUFFER_LEN]);
-
-    let code_vaddr = data_vaddr + data.len() as u64 + (1 << 12);
-    let code_offset = data_offset + data.len() as u64;
+    // TODO move to bss segment
+    data.label("tohex_buffer");
+    data.append(&[0u8; 32]);
 
     let mut asm = x86::Assembler::new();
 
     // Entrypoint
     asm.label("entry");
 
-    asm.push(MOV(RBX, info_response_vaddr));
+    asm.push(MOV(RBX, Ptr("bootloader_info_response")));
     asm.push(MOV(RBX, Indirect(RBX)));
     asm.push(TEST(RBX, RBX));
     asm.push(JZ(Label("halt")));
 
-    asm.push(MOV(RSI, hello_vaddr));
+    asm.push(MOV(RSI, Ptr("str_hello")));
     asm.push(CALL(Label("print")));
 
     // .name
     asm.push(MOV(RSI, Index(RBX, 8i8)));
     asm.push(CALL(Label("print")));
 
-    asm.push(MOV(RSI, space_vaddr));
+    asm.push(MOV(RSI, Ptr("str_space")));
     asm.push(CALL(Label("print")));
 
     // .version
     asm.push(MOV(RSI, Index(RBX, 16i8)));
     asm.push(CALL(Label("print")));
 
-    asm.push(MOV(RSI, space_vaddr));
+    asm.push(MOV(RSI, Ptr("str_space")));
     asm.push(CALL(Label("print")));
 
     asm.push(MOV(RDI, 0xdeadbeef_u64));
@@ -115,7 +94,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     asm.label("strlen_bottom");
 
     // Terminal write
-    asm.push(MOV(RAX, terminal_response_vaddr));
+    asm.push(MOV(RAX, Ptr("terminal_response")));
     asm.push(MOV(RAX, Indirect(RAX)));
     asm.push(TEST(RAX, RAX));
     asm.push(JZ(Label("halt")));
@@ -142,8 +121,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     asm.label("tohex");
     // TODO relax RCX to a smaller register size
     asm.push(MOV(RCX, 64));
-    asm.push(MOV(R9, tohex_buffer_vaddr));
-    asm.push(MOV(R10, tohex_lookup_vaddr));
+    asm.push(MOV(R9, Ptr("tohex_buffer")));
+    asm.push(MOV(R10, Ptr("tohex_lut")));
 
     asm.label("tohex_top");
     asm.push(TEST(RCX, RCX));
@@ -161,7 +140,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     asm.label("tohex_bottom");
 
     asm.push(MOV(Indirect(R9), 0u8));
-    asm.push(MOV(RAX, tohex_buffer_vaddr));
+    asm.push(MOV(RAX, Ptr("tohex_buffer")));
+    asm.push(RET);
+
+    asm.label("terminal_response");
     asm.push(RET);
 
     // Halt procedure
@@ -171,42 +153,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let code = asm.finish();
 
-    let mut file_header = FileHeader::new();
-    file_header.e_machine = 0x3e; // x86_64
-    file_header.e_entry = code_vaddr + u64::try_from(code.label("entry")).unwrap();
-    file_header.e_phnum = 2;
-    file_header.e_phoff = program_header_offset;
-
-    let program_headers = [
-        Phdr {
-            p_type: PT_LOAD,
-            p_flags: PF_R | PF_W,
-            p_offset: data_offset,
-            p_vaddr: data_vaddr,
-            p_paddr: data_vaddr,
-            p_filesz: data.len() as u64,
-            p_memsz: data.len() as u64,
-            p_align: 1 << 12,
-        },
-        Phdr {
-            p_type: PT_LOAD,
-            p_flags: PF_R | PF_X,
-            p_offset: code_offset,
-            p_vaddr: code_vaddr,
-            p_paddr: code_vaddr,
-            p_filesz: code.bytes().len() as u64,
-            p_memsz: code.bytes().len() as u64,
-            p_align: 1 << 12,
-        },
-    ];
+    let mut linker = ElfLinker::new();
+    linker.add_segment(PF_R | PF_W, 1 << 12, data);
+    linker.add_segment(PF_R | PF_X, 1 << 12, code);
+    let linked = linker.finish();
 
     let mut file = File::create("kernel.elf")?;
-    file.write_all(bytemuck::bytes_of(&file_header))?;
-    file.write_all(bytemuck::bytes_of(&program_headers))?;
-    let padding = vec![0; (data_offset - program_header_end) as usize];
-    file.write_all(&padding)?;
-    file.write_all(&data)?;
-    file.write_all(code.bytes())?;
-
+    linked.write(&mut file)?;
     Ok(())
 }
