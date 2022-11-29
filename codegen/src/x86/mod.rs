@@ -32,7 +32,7 @@ impl<'a> Assembler<'a> {
         self.segment.extend(encoded.serialize());
     }
 
-    pub fn finish(mut self) -> Segment<'a> {
+    pub fn finish(self) -> Segment<'a> {
         self.segment
     }
 }

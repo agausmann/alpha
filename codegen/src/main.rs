@@ -1,4 +1,4 @@
-use std::{error::Error, fs::File, io::Write};
+use std::{error::Error, fs::File};
 
 use elf64::program::{PF_R, PF_W, PF_X};
 use link::{ElfLinker, Label, Ptr, ReferenceFormat, Segment};
@@ -11,15 +11,8 @@ use x86::{
 pub mod elf64;
 pub mod limine;
 pub mod link;
+pub mod math;
 pub mod x86;
-
-fn align_up(x: u64, y: u64) -> u64 {
-    if x == 0 {
-        0
-    } else {
-        (1 + (x - 1) / y) * y
-    }
-}
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut data = Segment::new();
@@ -143,7 +136,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     asm.push(MOV(RAX, Ptr("tohex_buffer")));
     asm.push(RET);
 
-    asm.label("terminal_response");
+    asm.label("terminal_callback");
     asm.push(RET);
 
     // Halt procedure
