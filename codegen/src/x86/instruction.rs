@@ -1,6 +1,6 @@
 use super::{
     address::{Index, Indirect},
-    register::{Register, R64, R8},
+    register::{Register, R16, R32, R64, R8},
 };
 use crate::link::{Label, Ptr, Reference, ReferenceFormat};
 
@@ -29,6 +29,11 @@ impl<'a> InstructionBuilder<'a> {
             immediate: None,
             reference: None,
         }
+    }
+
+    pub fn operand_size_override(mut self) -> Self {
+        self.prefixes.push(0x66);
+        self
     }
 
     pub fn rex_w(self) -> Self {
@@ -135,6 +140,10 @@ impl<'a> InstructionBuilder<'a> {
 
     pub fn indexed_indirect(self, index: Index<R64, R64>) -> Self {
         self.mod_(0b00).rm_const(0b100).index(index.0).base(index.1)
+    }
+
+    pub fn indexed_displacement(self, index: Index<R64, i8>) -> Self {
+        self.mod_(0b01).rm_reg(index.0).displacement(index.1)
     }
 
     pub fn reference(self, label: Label<'a>, format: ReferenceFormat) -> Self {
@@ -322,6 +331,72 @@ impl<'a> Instruction<'a> for RET {
     }
 }
 
+pub struct IRET;
+
+impl<'a> Instruction<'a> for IRET {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // REX.W + CF | IRETQ
+        InstructionBuilder::new().rex_w().opcode(0xcf)
+    }
+}
+
+pub struct LIDT<Src>(pub Src);
+
+impl<'a> Instruction<'a> for LIDT<Indirect<R64>> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // 0F 01 /3 | LIDT m16&64
+        InstructionBuilder::new()
+            .opcode([0x0f, 0x01])
+            .reg_const(3)
+            .indirect(self.0)
+    }
+}
+
+pub struct STI;
+
+impl<'a> Instruction<'a> for STI {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // FB | STI
+        InstructionBuilder::new().opcode(0xfb)
+    }
+}
+
+pub struct NOP;
+
+impl<'a> Instruction<'a> for NOP {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // NP 90 | NOP
+        InstructionBuilder::new().opcode(0x90)
+    }
+}
+
+pub struct INT3;
+
+impl<'a> Instruction<'a> for INT3 {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // CC | INT3
+        InstructionBuilder::new().opcode(0xcc)
+    }
+}
+
+pub struct PUSH<Src>(pub Src);
+
+impl<'a> Instruction<'a> for PUSH<R64> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // 50+rd | PUSH r64
+        InstructionBuilder::new().opcode(0x50).op_reg(self.0)
+    }
+}
+
+pub struct POP<Dst>(pub Dst);
+
+impl<'a> Instruction<'a> for POP<R64> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // 58+ rd | POP r64
+        InstructionBuilder::new().opcode(0x58).op_reg(self.0)
+    }
+}
+
 pub struct MOV<Dst, Src>(pub Dst, pub Src);
 
 impl<'a> Instruction<'a> for MOV<R64, u64> {
@@ -375,10 +450,7 @@ impl<'a> Instruction<'a> for MOV<R64, Index<R64, i8>> {
             .rex_w()
             .opcode(0x8b)
             .reg(self.0)
-            // TODO builder method
-            .mod_(0b01)
-            .rm_reg(self.1 .0)
-            .displacement(self.1 .1)
+            .indexed_displacement(self.1)
     }
 }
 
@@ -442,6 +514,27 @@ impl<'a> Instruction<'a> for MOV<Indirect<R64>, u8> {
     }
 }
 
+impl<'a> Instruction<'a> for MOV<Index<R64, i8>, R16> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // 89 /r | MOV r/m16,r16
+        InstructionBuilder::new()
+            .operand_size_override()
+            .opcode(0x89)
+            .reg(self.1)
+            .indexed_displacement(self.0)
+    }
+}
+
+impl<'a> Instruction<'a> for MOV<Index<R64, i8>, R32> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // 89 /r | MOV r/m32,r32
+        InstructionBuilder::new()
+            .opcode(0x89)
+            .reg(self.1)
+            .indexed_displacement(self.0)
+    }
+}
+
 pub struct SUB<Dst, Src>(pub Dst, pub Src);
 
 impl<'a> Instruction<'a> for SUB<R64, i8> {
@@ -483,6 +576,20 @@ impl<'a> Instruction<'a> for TEST<R64, R64> {
     }
 }
 
+pub struct OR<Dst, Src>(pub Dst, pub Src);
+
+impl<'a> Instruction<'a> for OR<Index<R64, i8>, i16> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // 81 /1 iw | OR r/m16, imm16
+        InstructionBuilder::new()
+            .operand_size_override()
+            .opcode(0x81)
+            .reg_const(1)
+            .indexed_displacement(self.0)
+            .immediate(self.1)
+    }
+}
+
 pub struct AND<Dst, Src>(pub Dst, pub Src);
 
 impl<'a> Instruction<'a> for AND<R64, i8> {
@@ -511,6 +618,18 @@ impl<'a> Instruction<'a> for XOR<R64, R64> {
 }
 
 pub struct SHR<Dst, Amt>(pub Dst, pub Amt);
+
+impl<'a> Instruction<'a> for SHR<R64, i8> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // REX.W + C1 /5 ib | SHR r/m64, imm8
+        InstructionBuilder::new()
+            .rex_w()
+            .opcode(0xc1)
+            .reg_const(5)
+            .rm_literal(self.0)
+            .immediate(self.1)
+    }
+}
 
 impl<'a> Instruction<'a> for SHR<R64, R8> {
     fn encode(&self) -> InstructionBuilder<'a> {

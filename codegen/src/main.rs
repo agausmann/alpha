@@ -5,7 +5,7 @@ use link::{ElfLinker, Label, Ptr, ReferenceFormat, Segment};
 use x86::{
     address::*,
     instruction::*,
-    register::{R64::*, R8::*},
+    register::{R16::*, R32::*, R64::*, R8::*},
 };
 
 pub mod elf64;
@@ -26,11 +26,38 @@ fn main() -> Result<(), Box<dyn Error>> {
     data.offset_label(limine::RESPONSE_OFFSET, "bootloader_info_response");
     data.append(&limine::Request::new(limine::BOOTLOADER_INFO_REQUEST, 0));
 
+    data.label("idt");
+    for _idt_index in 0..4 {
+        // Offset 15..0
+        data.append(&0u16.to_le_bytes());
+        // Segment Selector
+        // (segment 5, rpl 0, from limine-provided GDT)
+        data.append(&(5u16 << 3).to_le_bytes());
+        // Not present; RPL 0; Interrupt gate type
+        data.append(&0x0e00_u16.to_le_bytes());
+        // Offset 31..16
+        data.append(&0u16.to_le_bytes());
+        // Offset 63..32
+        data.append(&0u32.to_le_bytes());
+        // Reserved
+        data.append(&0u32.to_le_bytes());
+    }
+
+    data.label("idtr");
+    data.append(&64_u16.to_le_bytes()); // Limit
+    data.append_reference("idt", ReferenceFormat::Abs64);
+
     data.label("str_hello");
     data.append(b"Hello \0");
 
     data.label("str_space");
     data.append(b" \0");
+
+    data.label("str_newline");
+    data.append(b"\n\0");
+
+    data.label("str_oops");
+    data.append(b"oops!\n\0");
 
     data.label("tohex_lut");
     data.append(b"0123456789abcdef");
@@ -40,6 +67,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     data.append(&[0u8; 32]);
 
     let mut asm = x86::Assembler::new();
+    asm.label("code_start");
 
     // Entrypoint
     asm.label("entry");
@@ -71,7 +99,65 @@ fn main() -> Result<(), Box<dyn Error>> {
     asm.push(MOV(RSI, RAX));
     asm.push(CALL(Label("print")));
 
+    asm.push(MOV(RSI, Ptr("str_newline")));
+    asm.push(CALL(Label("print")));
+
+    // Initialize IDT
+    asm.push(MOV(RDI, Ptr("idt")));
+    asm.push(MOV(RAX, Ptr("oops")));
+
+    // 16 bytes per table entry; targeting INT3
+    let gate_base: i8 = 16 * 3;
+    // Offset 15..0
+    asm.push(MOV(Index(RDI, gate_base), AX));
+    // Offset 31..16
+    asm.push(SHR(RAX, 16));
+    asm.push(MOV(Index(RDI, gate_base + 6), AX));
+    // Offset 63..32
+    asm.push(SHR(RAX, 16));
+    asm.push(MOV(Index(RDI, gate_base + 8), EAX));
+    // Present
+    asm.push(OR(Index(RDI, gate_base + 4), 0x8000_u16 as i16));
+
+    asm.push(MOV(RAX, Ptr("idtr")));
+    asm.push(LIDT(Indirect(RAX)));
+    asm.push(STI);
+    asm.push(NOP);
+    asm.push(INT3);
+
+    asm.push(MOV(RSI, Ptr("str_hello")));
+    asm.push(CALL(Label("print")));
+
     asm.push(JMP(Label("halt")));
+
+    asm.label("oops");
+    asm.push(PUSH(RAX));
+    asm.push(PUSH(RBX));
+    asm.push(PUSH(RCX));
+    asm.push(PUSH(RDX));
+    asm.push(PUSH(RDI));
+    asm.push(PUSH(RSI));
+    asm.push(PUSH(R8));
+    asm.push(PUSH(R9));
+    asm.push(PUSH(R10));
+    asm.push(PUSH(R11));
+
+    asm.push(MOV(RSI, Ptr("str_oops")));
+    asm.push(CALL(Label("print")));
+
+    asm.push(POP(R11));
+    asm.push(POP(R10));
+    asm.push(POP(R9));
+    asm.push(POP(R8));
+    asm.push(POP(RSI));
+    asm.push(POP(RDI));
+    asm.push(POP(RDX));
+    asm.push(POP(RCX));
+    asm.push(POP(RBX));
+    asm.push(POP(RAX));
+
+    asm.push(STI);
+    asm.push(IRET);
 
     // Print procedure
     // - RSI - String to print
