@@ -22,9 +22,18 @@ pub struct Reference {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ReferenceFormat {
+    /// A signed 8-bit relative offset from the end of the reference.
+    /// Used in short-JMP and branching instructions.
+    Rel8,
+
     /// A signed 32-bit relative offset from the end of the reference.
     /// Used in near-JMP and branching instructions.
     Rel32,
+
+    /// An absolute 32-bit address, sign-extended to 64-bit.
+    /// Used to compress 64-bit address values that are near the top or
+    /// bottom of the 64-bit space (i.e. when the top 33 bits are equal)
+    Abs32,
 
     /// An absolute 64-bit address.
     Abs64,
@@ -33,7 +42,9 @@ pub enum ReferenceFormat {
 impl ReferenceFormat {
     pub fn len(&self) -> usize {
         match self {
+            Self::Rel8 => 1,
             Self::Rel32 => 4,
+            Self::Abs32 => 4,
             Self::Abs64 => 8,
         }
     }
@@ -54,6 +65,10 @@ impl<'a> Segment<'a> {
             labels: HashMap::new(),
             references: HashMap::new(),
         }
+    }
+
+    pub fn position(&self) -> usize {
+        self.data.len()
     }
 
     pub fn align(&mut self, alignment: usize) {
@@ -100,6 +115,10 @@ impl<'a> Segment<'a> {
                 location: self.data.len() + offset,
                 format,
             });
+    }
+
+    pub fn label_location(&self, label: &'a str) -> Option<usize> {
+        self.labels.get(&Label(label)).copied()
     }
 }
 
@@ -181,6 +200,22 @@ impl<'a> ElfLinker<'a> {
 
                 for reference in references {
                     match reference.format {
+                        ReferenceFormat::Rel8 => {
+                            //FIXME This assumes that the rel8 operand is at the
+                            // end of the instruction.
+                            let relative_to = header.p_vaddr + reference.location as u64 + 1;
+                            let offset = if label_location > relative_to {
+                                i8::try_from(label_location - relative_to)
+                                    .map_err(|_| format!("relative overflow label={label:?} location={label_location:x} relative_to={relative_to:x}")).unwrap()
+                            } else {
+                                //FIXME This limits the negative range by 1 byte.
+                                -i8::try_from(relative_to - label_location)
+                                .map_err(|_| format!("relative overflow label={label:?} location={label_location:x} relative_to={relative_to:x}")).unwrap()
+                            };
+
+                            segment.data[reference.location..][..1]
+                                .copy_from_slice(&offset.to_le_bytes())
+                        }
                         ReferenceFormat::Rel32 => {
                             //FIXME This assumes that the rel32 operand is at the
                             // end of the instruction.
@@ -197,7 +232,12 @@ impl<'a> ElfLinker<'a> {
                             segment.data[reference.location..][..4]
                                 .copy_from_slice(&offset.to_le_bytes())
                         }
-
+                        ReferenceFormat::Abs32 => {
+                            let location = u64::try_from(label_location).unwrap() as i64;
+                            let truncated_location = i32::try_from(location).unwrap();
+                            segment.data[reference.location..][..4]
+                                .copy_from_slice(&truncated_location.to_le_bytes());
+                        }
                         ReferenceFormat::Abs64 => {
                             segment.data[reference.location..][..8].copy_from_slice(
                                 &u64::try_from(label_location).unwrap().to_le_bytes(),

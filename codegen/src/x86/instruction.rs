@@ -153,6 +153,11 @@ impl<'a> InstructionBuilder<'a> {
         }
     }
 
+    pub fn rel8(self, label: Label<'a>) -> Self {
+        self.displacement(0i8)
+            .reference(label, ReferenceFormat::Rel8)
+    }
+
     pub fn rel32(self, label: Label<'a>) -> Self {
         self.displacement(0i32)
             .reference(label, ReferenceFormat::Rel32)
@@ -161,6 +166,11 @@ impl<'a> InstructionBuilder<'a> {
     pub fn ptr(self, ptr: Ptr<'a>) -> Self {
         self.immediate(0u64)
             .reference(Label(ptr.0), ReferenceFormat::Abs64)
+    }
+
+    pub fn ptr32(self, ptr: Ptr<'a>) -> Self {
+        self.immediate(0u32)
+            .reference(Label(ptr.0), ReferenceFormat::Abs32)
     }
 
     pub fn serialize<'b>(&'b self) -> impl IntoIterator<Item = u8> + 'b {
@@ -272,8 +282,21 @@ impl Opcode for [u8; 3] {
     }
 }
 
+pub trait InstructionOptions<'a> {
+    fn options(&self) -> Vec<InstructionBuilder<'a>>;
+}
+
 pub trait Instruction<'a> {
     fn encode(&self) -> InstructionBuilder<'a>;
+}
+
+impl<'a, T> InstructionOptions<'a> for T
+where
+    T: Instruction<'a>,
+{
+    fn options(&self) -> Vec<InstructionBuilder<'a>> {
+        vec![self.encode()]
+    }
 }
 
 pub struct HLT;
@@ -287,19 +310,27 @@ impl<'a> Instruction<'a> for HLT {
 
 pub struct JMP<Target>(pub Target);
 
-impl<'a> Instruction<'a> for JMP<Label<'a>> {
-    fn encode(&self) -> InstructionBuilder<'a> {
-        // E9 cd | JMP rel32
-        InstructionBuilder::new().opcode(0xe9).rel32(self.0)
+impl<'a> InstructionOptions<'a> for JMP<Label<'a>> {
+    fn options(&self) -> Vec<InstructionBuilder<'a>> {
+        vec![
+            // EB cb | JMP rel8
+            InstructionBuilder::new().opcode(0xeb).rel8(self.0),
+            // E9 cd | JMP rel32
+            InstructionBuilder::new().opcode(0xe9).rel32(self.0),
+        ]
     }
 }
 
 pub struct JZ<Target>(pub Target);
 
-impl<'a> Instruction<'a> for JZ<Label<'a>> {
-    fn encode(&self) -> InstructionBuilder<'a> {
-        // 0F 84 cd | JZ rel32
-        InstructionBuilder::new().opcode([0x0f, 0x84]).rel32(self.0)
+impl<'a> InstructionOptions<'a> for JZ<Label<'a>> {
+    fn options(&self) -> Vec<InstructionBuilder<'a>> {
+        vec![
+            // 74 cb | JZ rel8
+            InstructionBuilder::new().opcode(0x74).rel8(self.0),
+            // 0F 84 cd | JZ rel32
+            InstructionBuilder::new().opcode([0x0f, 0x84]).rel32(self.0),
+        ]
     }
 }
 
@@ -401,23 +432,43 @@ pub struct MOV<Dst, Src>(pub Dst, pub Src);
 
 impl<'a> Instruction<'a> for MOV<R64, u64> {
     fn encode(&self) -> InstructionBuilder<'a> {
-        // REX.W + B8+ rd io | MOV r64, imm64
-        InstructionBuilder::new()
-            .rex_w()
-            .opcode(0xb8)
-            .op_reg(self.0)
-            .immediate(self.1)
+        // Attempt to compress immediate value to 32 bits using sign-extending:
+        if let Ok(compressed_immediate) = i32::try_from(self.1 as i64) {
+            // REX.W + C7 /0 id | MOV r/m64, imm32
+            InstructionBuilder::new()
+                .rex_w()
+                .opcode(0xc7)
+                .reg_const(0)
+                .rm_literal(self.0)
+                .immediate(compressed_immediate)
+        } else {
+            // REX.W + B8+ rd io | MOV r64, imm64
+            InstructionBuilder::new()
+                .rex_w()
+                .opcode(0xb8)
+                .op_reg(self.0)
+                .immediate(self.1)
+        }
     }
 }
 
-impl<'a> Instruction<'a> for MOV<R64, Ptr<'a>> {
-    fn encode(&self) -> InstructionBuilder<'a> {
-        // REX.W + B8+ rd io | MOV r64, imm64
-        InstructionBuilder::new()
-            .rex_w()
-            .opcode(0xb8)
-            .op_reg(self.0)
-            .ptr(self.1)
+impl<'a> InstructionOptions<'a> for MOV<R64, Ptr<'a>> {
+    fn options(&self) -> Vec<InstructionBuilder<'a>> {
+        vec![
+            // REX.W + C7 /0 id | MOV r/m64, imm32
+            InstructionBuilder::new()
+                .rex_w()
+                .opcode(0xc7)
+                .reg_const(0)
+                .rm_literal(self.0)
+                .ptr32(self.1),
+            // REX.W + B8+ rd io | MOV r64, imm64
+            InstructionBuilder::new()
+                .rex_w()
+                .opcode(0xb8)
+                .op_reg(self.0)
+                .ptr(self.1),
+        ]
     }
 }
 
