@@ -15,16 +15,36 @@ pub mod math;
 pub mod x86;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let mut rodata = Segment::new();
+    rodata.align(8);
+
+    rodata.offset_label(limine::RESPONSE_OFFSET, "terminal_response");
+    rodata.append(&limine::Request::new(limine::TERMINAL_REQUEST, 0));
+    rodata.append_reference("terminal_callback", ReferenceFormat::Abs64);
+
+    rodata.offset_label(limine::RESPONSE_OFFSET, "bootloader_info_response");
+    rodata.append(&limine::Request::new(limine::BOOTLOADER_INFO_REQUEST, 0));
+
+    rodata.label("idtr");
+    rodata.append(&64_u16.to_le_bytes()); // Limit
+    rodata.append_reference("idt", ReferenceFormat::Abs64);
+
+    rodata.label("str_hello");
+    rodata.append(b"Hello \0");
+
+    rodata.label("str_space");
+    rodata.append(b" \0");
+
+    rodata.label("str_newline");
+    rodata.append(b"\n\0");
+
+    rodata.label("str_oops");
+    rodata.append(b"oops!\n\0");
+
+    rodata.label("tohex_lut");
+    rodata.append(b"0123456789abcdef");
+
     let mut data = Segment::new();
-
-    data.align(8);
-
-    data.offset_label(limine::RESPONSE_OFFSET, "terminal_response");
-    data.append(&limine::Request::new(limine::TERMINAL_REQUEST, 0));
-    data.append_reference("terminal_callback", ReferenceFormat::Abs64);
-
-    data.offset_label(limine::RESPONSE_OFFSET, "bootloader_info_response");
-    data.append(&limine::Request::new(limine::BOOTLOADER_INFO_REQUEST, 0));
 
     data.label("idt");
     for _idt_index in 0..4 {
@@ -42,25 +62,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         // Reserved
         data.append(&0u32.to_le_bytes());
     }
-
-    data.label("idtr");
-    data.append(&64_u16.to_le_bytes()); // Limit
-    data.append_reference("idt", ReferenceFormat::Abs64);
-
-    data.label("str_hello");
-    data.append(b"Hello \0");
-
-    data.label("str_space");
-    data.append(b" \0");
-
-    data.label("str_newline");
-    data.append(b"\n\0");
-
-    data.label("str_oops");
-    data.append(b"oops!\n\0");
-
-    data.label("tohex_lut");
-    data.append(b"0123456789abcdef");
 
     // TODO move to bss segment
     data.label("tohex_buffer");
@@ -233,6 +234,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let code = asm.finish();
 
     let mut linker = ElfLinker::new();
+    linker.add_segment(PF_R, 1 << 12, rodata);
     linker.add_segment(PF_R | PF_W, 1 << 12, data);
     linker.add_segment(PF_R | PF_X, 1 << 12, code);
     let linked = linker.finish();
