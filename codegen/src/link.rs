@@ -20,6 +20,8 @@ pub struct Reference {
     pub format: ReferenceFormat,
 }
 
+impl Reference {}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ReferenceFormat {
     /// A signed 8-bit relative offset from the end of the reference.
@@ -46,6 +48,54 @@ impl ReferenceFormat {
             Self::Rel32 => 4,
             Self::Abs32 => 4,
             Self::Abs64 => 8,
+        }
+    }
+
+    pub fn is_relative(&self) -> bool {
+        match self {
+            Self::Rel8 | Self::Rel32 => true,
+            Self::Abs32 | Self::Abs64 => false,
+        }
+    }
+    pub fn resolve(&self, own_location: u64, label_location: u64) -> Option<Vec<u8>> {
+        match self {
+            Self::Rel8 => {
+                //FIXME This assumes that the rel8 operand is at the
+                // end of the instruction.
+                let relative_to = own_location + 1;
+                let offset = if label_location > relative_to {
+                    i8::try_from(label_location - relative_to).ok()?
+                } else {
+                    //FIXME This limits the negative range by 1 byte.
+                    -i8::try_from(relative_to - label_location).ok()?
+                };
+
+                Some(offset.to_le_bytes().to_vec())
+            }
+            Self::Rel32 => {
+                //FIXME This assumes that the rel32 operand is at the
+                // end of the instruction.
+                let relative_to = own_location + 4;
+                let offset = if label_location > relative_to {
+                    i32::try_from(label_location - relative_to).ok()?
+                } else {
+                    //FIXME This limits the negative range by 1 byte.
+                    -i32::try_from(relative_to - label_location).ok()?
+                };
+
+                Some(offset.to_le_bytes().to_vec())
+            }
+            Self::Abs32 => {
+                let location = u64::try_from(label_location).unwrap() as i64;
+                let truncated_location = i32::try_from(location).ok()?;
+                Some(truncated_location.to_le_bytes().to_vec())
+            }
+            Self::Abs64 => Some(
+                u64::try_from(label_location)
+                    .unwrap()
+                    .to_le_bytes()
+                    .to_vec(),
+            ),
         }
     }
 }
@@ -108,17 +158,22 @@ impl<'a> Segment<'a> {
     }
 
     pub fn offset_reference(&mut self, offset: usize, label: &'a str, format: ReferenceFormat) {
+        self.absolute_reference(self.data.len() + offset, label, format)
+    }
+
+    pub fn absolute_reference(&mut self, location: usize, label: &'a str, format: ReferenceFormat) {
         self.references
             .entry(Label(label))
             .or_insert(Vec::new())
-            .push(Reference {
-                location: self.data.len() + offset,
-                format,
-            });
+            .push(Reference { location, format });
     }
 
     pub fn label_location(&self, label: &'a str) -> Option<usize> {
         self.labels.get(&Label(label)).copied()
+    }
+
+    pub fn data_mut(&mut self) -> &mut [u8] {
+        &mut self.data
     }
 }
 
@@ -199,51 +254,11 @@ impl<'a> ElfLinker<'a> {
                 let label_location = *labels.get(label).expect("undefined label");
 
                 for reference in references {
-                    match reference.format {
-                        ReferenceFormat::Rel8 => {
-                            //FIXME This assumes that the rel8 operand is at the
-                            // end of the instruction.
-                            let relative_to = header.p_vaddr + reference.location as u64 + 1;
-                            let offset = if label_location > relative_to {
-                                i8::try_from(label_location - relative_to)
-                                    .map_err(|_| format!("relative overflow label={label:?} location={label_location:x} relative_to={relative_to:x}")).unwrap()
-                            } else {
-                                //FIXME This limits the negative range by 1 byte.
-                                -i8::try_from(relative_to - label_location)
-                                .map_err(|_| format!("relative overflow label={label:?} location={label_location:x} relative_to={relative_to:x}")).unwrap()
-                            };
-
-                            segment.data[reference.location..][..1]
-                                .copy_from_slice(&offset.to_le_bytes())
-                        }
-                        ReferenceFormat::Rel32 => {
-                            //FIXME This assumes that the rel32 operand is at the
-                            // end of the instruction.
-                            let relative_to = header.p_vaddr + reference.location as u64 + 4;
-                            let offset = if label_location > relative_to {
-                                i32::try_from(label_location - relative_to)
-                                    .map_err(|_| format!("relative overflow label={label:?} location={label_location:x} relative_to={relative_to:x}")).unwrap()
-                            } else {
-                                //FIXME This limits the negative range by 1 byte.
-                                -i32::try_from(relative_to - label_location)
-                                .map_err(|_| format!("relative overflow label={label:?} location={label_location:x} relative_to={relative_to:x}")).unwrap()
-                            };
-
-                            segment.data[reference.location..][..4]
-                                .copy_from_slice(&offset.to_le_bytes())
-                        }
-                        ReferenceFormat::Abs32 => {
-                            let location = u64::try_from(label_location).unwrap() as i64;
-                            let truncated_location = i32::try_from(location).unwrap();
-                            segment.data[reference.location..][..4]
-                                .copy_from_slice(&truncated_location.to_le_bytes());
-                        }
-                        ReferenceFormat::Abs64 => {
-                            segment.data[reference.location..][..8].copy_from_slice(
-                                &u64::try_from(label_location).unwrap().to_le_bytes(),
-                            );
-                        }
-                    }
+                    let reference_location = header.p_vaddr + reference.location as u64;
+                    let reference_value = reference.format.resolve(reference_location, label_location)
+                        .ok_or_else(|| format!("relative overflow label={label:?} label_location={label_location:x} reference_location={reference_location:x}")).unwrap();
+                    segment.data[reference.location..][..reference_value.len()]
+                        .copy_from_slice(&reference_value);
                 }
             }
         }
