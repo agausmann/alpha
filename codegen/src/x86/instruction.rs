@@ -158,9 +158,11 @@ impl<'a> InstructionBuilder<'a> {
             .reference(label, ReferenceFormat::Rel32)
     }
 
-    pub fn ptr(self, ptr: Ptr<'a>) -> Self {
-        self.immediate(0u64)
-            .reference(Label(ptr.0), ReferenceFormat::Abs64)
+    pub fn rip_relative(self, ptr: Ptr<'a>) -> Self {
+        self.mod_(0b00)
+            .rm_const(0b101)
+            .immediate(0u32)
+            .reference(Label(ptr.0), ReferenceFormat::Rel32)
     }
 
     pub fn serialize<'b>(&'b self) -> impl IntoIterator<Item = u8> + 'b {
@@ -352,6 +354,16 @@ impl<'a> Instruction<'a> for LIDT<Indirect<R64>> {
     }
 }
 
+impl<'a> Instruction<'a> for LIDT<Ptr<'a>> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // 0F 01 /3 | LIDT m16&64
+        InstructionBuilder::new()
+            .opcode([0x0f, 0x01])
+            .reg_const(3)
+            .rip_relative(self.0)
+    }
+}
+
 pub struct STI;
 
 impl<'a> Instruction<'a> for STI {
@@ -412,12 +424,12 @@ impl<'a> Instruction<'a> for MOV<R64, u64> {
 
 impl<'a> Instruction<'a> for MOV<R64, Ptr<'a>> {
     fn encode(&self) -> InstructionBuilder<'a> {
-        // REX.W + B8+ rd io | MOV r64, imm64
+        // REX.W + 8B /r | MOV r64,r/m64
         InstructionBuilder::new()
             .rex_w()
-            .opcode(0xb8)
-            .op_reg(self.0)
-            .ptr(self.1)
+            .opcode(0x8b)
+            .reg(self.0)
+            .rip_relative(self.1)
     }
 }
 
@@ -532,6 +544,19 @@ impl<'a> Instruction<'a> for MOV<Index<R64, i8>, R32> {
             .opcode(0x89)
             .reg(self.1)
             .indexed_displacement(self.0)
+    }
+}
+
+pub struct LEA<Dst, Src>(pub Dst, pub Src);
+
+impl<'a> Instruction<'a> for LEA<R64, Ptr<'a>> {
+    fn encode(&self) -> InstructionBuilder<'a> {
+        // REX.W + 8D /r | LEA r64, m
+        InstructionBuilder::new()
+            .rex_w()
+            .opcode(0x8d)
+            .reg(self.0)
+            .rip_relative(self.1)
     }
 }
 

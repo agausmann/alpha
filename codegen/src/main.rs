@@ -74,25 +74,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     asm.label("entry");
 
     asm.push(MOV(RBX, Ptr("bootloader_info_response")));
-    asm.push(MOV(RBX, Indirect(RBX)));
     asm.push(TEST(RBX, RBX));
     asm.push(JZ(Label("halt")));
 
-    asm.push(MOV(RSI, Ptr("str_hello")));
+    asm.push(LEA(RSI, Ptr("str_hello")));
     asm.push(CALL(Label("print")));
 
     // .name
     asm.push(MOV(RSI, Index(RBX, 8i8)));
     asm.push(CALL(Label("print")));
 
-    asm.push(MOV(RSI, Ptr("str_space")));
+    asm.push(LEA(RSI, Ptr("str_space")));
     asm.push(CALL(Label("print")));
 
     // .version
     asm.push(MOV(RSI, Index(RBX, 16i8)));
     asm.push(CALL(Label("print")));
 
-    asm.push(MOV(RSI, Ptr("str_space")));
+    asm.push(LEA(RSI, Ptr("str_space")));
     asm.push(CALL(Label("print")));
 
     asm.push(MOV(RDI, 0xdeadbeef_u64));
@@ -100,12 +99,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     asm.push(MOV(RSI, RAX));
     asm.push(CALL(Label("print")));
 
-    asm.push(MOV(RSI, Ptr("str_newline")));
+    asm.push(LEA(RSI, Ptr("str_newline")));
     asm.push(CALL(Label("print")));
 
     // Initialize IDT
-    asm.push(MOV(RDI, Ptr("idt")));
-    asm.push(MOV(RAX, Ptr("oops")));
+    asm.push(LEA(RDI, Ptr("idt")));
+    asm.push(LEA(RAX, Ptr("oops")));
 
     // 16 bytes per table entry; targeting INT3
     let gate_base: i8 = 16 * 3;
@@ -120,13 +119,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Present
     asm.push(OR(Index(RDI, gate_base + 4), 0x8000_u16 as i16));
 
-    asm.push(MOV(RAX, Ptr("idtr")));
-    asm.push(LIDT(Indirect(RAX)));
+    asm.push(LIDT(Ptr("idtr")));
     asm.push(STI);
     asm.push(NOP);
     asm.push(INT3);
 
-    asm.push(MOV(RSI, Ptr("str_hello")));
+    asm.push(LEA(RSI, Ptr("str_hello")));
     asm.push(CALL(Label("print")));
 
     asm.push(JMP(Label("halt")));
@@ -143,7 +141,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     asm.push(PUSH(R10));
     asm.push(PUSH(R11));
 
-    asm.push(MOV(RSI, Ptr("str_oops")));
+    asm.push(LEA(RSI, Ptr("str_oops")));
     asm.push(CALL(Label("print")));
 
     asm.push(POP(R11));
@@ -175,7 +173,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Terminal write
     asm.push(MOV(RAX, Ptr("terminal_response")));
-    asm.push(MOV(RAX, Indirect(RAX)));
     asm.push(TEST(RAX, RAX));
     asm.push(JZ(Label("halt")));
 
@@ -201,8 +198,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     asm.label("tohex");
     // TODO relax RCX to a smaller register size
     asm.push(MOV(RCX, 64));
-    asm.push(MOV(R9, Ptr("tohex_buffer")));
-    asm.push(MOV(R10, Ptr("tohex_lut")));
+    asm.push(LEA(R9, Ptr("tohex_buffer")));
+    asm.push(LEA(R10, Ptr("tohex_lut")));
 
     asm.label("tohex_top");
     asm.push(TEST(RCX, RCX));
@@ -220,7 +217,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     asm.label("tohex_bottom");
 
     asm.push(MOV(Indirect(R9), 0u8));
-    asm.push(MOV(RAX, Ptr("tohex_buffer")));
+    asm.push(LEA(RAX, Ptr("tohex_buffer")));
     asm.push(RET);
 
     asm.label("terminal_callback");
