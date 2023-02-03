@@ -1,0 +1,410 @@
+
+pub const COMMON_MAGIC: [u64; 2] = [0xc7b1dd30df4c8b88, 0x0a82e883a194f07b];
+
+pub struct Uuid {
+    a: u32,
+    b: u16,
+    c: u16,
+    d: [u8; 8],
+}
+
+pub enum MediaType : u32 {
+    Generic = 0,
+    Optical = 1,
+    Tftp = 2,
+}
+
+pub struct File {
+    revision: u64,
+    address: *u8,
+    size: u64,
+    path: *u8,
+    cmdline: *u8,
+    media_type: u32,
+    unused: u32,
+    tftp_ip: u32,
+    tftp_port: u32,
+    partition_index: u32,
+    mbr_disk_id: u32,
+    gpt_disk_uuid: Uuid,
+    gpt_part_uuid: Uuid,
+    part_uuid: Uuid,
+}
+
+/* Boot info */
+
+pub const BOOTLOADER_INFO_REQUEST: [u64; 4] = [0xf55038d8e2a1202f, 0x279426fcf5f59740];
+
+pub struct BootloaderInfoResponse {
+    revision: u64,
+    name: *u8,
+    version: *u8,
+};
+
+pub struct BootloaderInfoRequest {
+    magic: [u64; 2],
+    id: [u64; 2],
+    revision: u64,
+    response: *BootloaderInfoResponse,
+}
+
+/* Stack size */
+
+pub const STACK_SIZE_REQUEST: [u64; 2] = [0x224ef0460a8e8926, 0xe1cb0fc25f46ea3d];
+
+pub struct StackSizeResponse {
+    revision: u64,
+}
+
+pub struct StackSizeRequest {
+    magic: [u64; 2],
+    id: [u64; 2],
+    revision: u64,
+    response: *StackSizeResponse,
+    stack_size: u64,
+}
+
+/* HHDM */
+
+pub const HHDM_REQUEST: [u64; 2] = [0x48dcf1cb8ad2b852, 0x63984e959a98244b];
+
+pub struct HhdmResponse {
+    revision: u64,
+    offset: u64,
+}
+
+pub struct limine_hhdm_request {
+    magic: [u64; 2],
+    id: [u64; 2],
+    revision: u64,
+    response: *HhdmResponse,
+};
+
+/* Framebuffer */
+
+pub const FRAMEBUFFER_REQUEST: [u64; 2] = [0x9d5827dcd881dd75, 0xa3148604f6fab11b];
+
+pub enum MemoryModel : u8 {
+    Rgb = 1,
+}
+
+pub struct VideoMode {
+    pitch: u64,
+    width: u64,
+    height: u64,
+    bpp: u64,
+    memory_model: u8,
+    red_mask_size: u8,
+    red_mask_shift: u8,
+    green_mask_size: u8,
+    green_mask_shift: u8,
+    blue_mask_size: u8,
+    blue_mask_shift: u8,
+}
+
+pub struct Framebuffer {
+    address: *u8,
+    width: u64,
+    height: u64,
+    pitch: u64,
+    bpp: u16,
+    memory_model: u8,
+    red_mask_size: u8,
+    red_mask_shift: u8,
+    green_mask_size: u8,
+    green_mask_shift: u8,
+    blue_mask_size: u8,
+    blue_mask_shift: u8,
+    unused: [u8; 7],
+    edid_size: u64,
+    edid: *u8,
+    /* Response revision 1 */
+    mode_count: u64,
+    modes: **VideoMode,
+}
+
+pub struct FramebufferResponse {
+    revision: u64,
+    framebuffer_count: u64,
+    framebuffers: **Framebuffer,
+}
+
+pub struct FramebufferRequest {
+    magic: [u64; 2],
+    id: [u64; 2],
+    revision: u64,
+    response: *FramebufferResponse,
+}
+
+/* Terminal */
+
+pub const TERMINAL_REQUEST: [u64; 2] = [0xc8ac59310c2b0844, 0xa68d0c7265d38878];
+
+pub enum TerminalCallbackType : u64 {
+    Dec = 10,
+    Bell = 20,
+    PrivateId = 30,
+    StatusReport = 40,
+    PosReport = 50,
+    KbdLeds = 60,
+    Mode = 70,
+    Linux = 80,
+}
+
+pub enum TerminalContext : u64 {
+    Size = -1i64 as u64,
+    Save = -2i64 as u64,
+    Restore = -3i64 as u64,
+    Refresh = -4i64 as u64,
+
+    /* Response revision 1 */
+    OobOutputGet = -10i64 as u64,
+    OobOutputSet = -11i64 as u64,
+}
+
+pub enum OobOutput : u64 {
+    OCRNL = 0x01,
+    OFDEL = 0x02,
+    OFILL = 0x04,
+    OLCUC = 0x08,
+    ONLCR = 0x10,
+    ONLRET = 0x20,
+    ONOCR = 0x40,
+    OPOST = 0x80,
+}
+
+pub struct Terminal {
+    columns: u64,
+    rows: u64,
+    framebuffer: *Framebuffer,
+}
+
+pub type TerminalWrite = fn(*Terminal, *u8, u64);
+pub type TerminalCallback = fn(*Terminal, u64, u64, u64, u64);
+
+pub struct TerminalResponse {
+    revision: u64,
+    terminal_count: u64,
+    terminals: **Terminal,
+    write: TerminalWrite,
+}
+
+pub struct TerminalRequest {
+    magic: [u64; 2],
+    id: [u64; 2],
+    revision: u64,
+    response: *TerminalResponse,
+    callback: TerminalCallback,
+}
+
+/* 5-level paging */
+
+pub const FIVE_LEVEL_PAGING_REQUEST: [u64; 2] = [0x94469551da9b3192, 0xebe5e86db7382888];
+
+pub struct FiveLevelPagingResponse {
+    revision: u64,
+}
+
+pub struct FiveLevelPagingRequest {
+    magic: [u64; 2],
+    id: [u64; 2],
+    revision: [u64; 2],
+    response: *FiveLevelPagingResponse,
+}
+
+/* SMP */
+
+pub const SmpRequest: [u64, 2] = [0x95a67b819a1b857e, 0xa0b61b723b6a73e0];
+
+// TODO automatically select file based on target platform
+pub use arch::{SmpFlags, SmpInfo, SmpResponse, GotoAddress};
+
+pub struct SmpRequest {
+    magic: [u64; 2],
+    id: [u64; 2],
+    revision: [u64; 2],
+    response: *SmpResponse,
+    flags: u64,
+}
+
+/* Memory map */
+
+pub const MEMMAP_REQUEST: [u64; 2] = [0x67cf3d9d378a806f, 0xe304acdfc50c3c62];
+
+pub enum MemmapType : u64 {
+    Usable = 0,
+    Reserved = 1,
+    AcpiReclaimable = 2,
+    Nvs = 3,
+    BadMemory = 4,
+    BootloaderReclaimable = 5,
+    KernelAndModules = 6,
+    Framebuffer = 7,
+}
+
+pub struct MemmapEntry {
+    base: u64,
+    length: u64,
+    memmap_type: u64,
+}
+
+pub struct MemmapResponse {
+    revision: u64,
+    entry_count: u64,
+    entries: **MemmapEntry,
+}
+
+pub struct MemmapRequest {
+    magic: [u64; 2],
+    id: [u64; 2],
+    revision: u64,
+    response: *MemmapResponse,
+}
+
+/* Entry point */
+
+pub const EntryPointRequest: [u64; 2] = [0x13d86c035a1cd3e1, 0x2b0caa89d8f3026a];
+
+pub type EntryPoint = fn();
+
+pub struct EntryPointResponse {
+    revision: u64,
+}
+
+pub struct EntryPointRequest {
+    magic: [u64, 2],
+    id: [u64; 2],
+    revision: u64,
+    response: *EntryPointResponse,
+    entry: EntryPoint,
+}
+
+/* Kernel File */
+
+pub const KERNEL_FILE_REQUEST: [u64; 2] = [0xad97e90e83f1ed67, 0x31eb5d1c5ff23b69];
+
+pub struct KernelFileResponse {
+    revision: u64,
+    kernel_file: *File,
+}
+
+pub struct KernelFileRequest {
+    magic: [u64; 2],
+    id: [u64; 2],
+    revision: u64,
+    response: *KernelFileResponse,
+}
+
+/* Module */
+
+pub const MODULE_REQUEST: [u64; 2] = [0x3e7e279702be32af, 0xca1c4f3bd1280cee];
+
+pub struct ModuleResponse {
+    revision: u64,
+    module_count: u64,
+    modules: **File,
+}
+
+pub struct ModuleRequest {
+    magic: [u64; 2],
+    id: [u64; 2],
+    response: *ModuleResponse,
+}
+
+/* RSDP */
+ 
+pub const RSDP_REQUEST: [u64; 2] = [0xc5e77b6b397e7b43, 0x27637845accdcf3c];
+
+pub struct RsdpResponhse {
+    revision: u64,
+    address: *u8,
+}
+
+pub struct RsdpRequest {
+    magic: [u64; 2],
+    id: [u64; 2],
+    revision: u64,
+    response: *RsdpResponse,
+}
+
+/* SMBIOS */
+
+pub const SMBIOS_REQUEST: [u64; 2] = [0x9e9046f11e095391, 0xaa4a520fefbde5ee];
+
+pub struct SmbiosResponse {
+    revision: u64,
+    entry_32: *u8,
+    entry_64: *u8,
+}
+
+pub struct SmbiosRequest {
+    magic: [u64; 2],
+    id: [u64; 2],
+    revision: u64,
+    response: *SmbiosResponse,
+}
+
+/* EFI system table */
+
+pub const EFI_SYSTEM_TABLE_REQUEST: [u64; 2] = [0x5ceba5163eaaf6d6, 0x0a6981610cf65fcc];
+
+pub struct EfiSystemTableResponse {
+    revision: u64,
+    address: *u8,
+}
+
+pub struct EfiSystemTableRequest {
+    magic: [u64; 2],
+    id: [u64; 2],
+    revision: u64,
+    response: *EfiSystemTableResponse,
+}
+
+/* Boot time */
+
+pub const BOOT_TIME_REQUEST: [u64; 2] = [0x502746e184c088aa, 0xfbc5ec83e6327893];
+
+pub struct BootTimeResponse {
+    revision: u64,
+    boot_time: i64,
+}
+
+pub struct BootTimeRequest {
+    magic: [u64; 2],
+    id: [u64; 2],
+    revision: u64,
+    response: *BootTimeResponse,
+}
+
+/* Kernel address */
+
+pub const KERNEL_ADDRESS_REQUEST: [u64; 2] = [0x71ba76863cc55f63, 0xb2644a48c516a487];
+
+pub struct KernelAddressResponse {
+    revision: u64,
+    physical_base: u64,
+    virtual_base: u64,
+}
+
+pub struct KernelAddressRequest {
+    magic: [u64; 2],
+    id: [u64; 2],
+    revision: u64,
+    response: *KernelAddressResponse,
+}
+
+/* Device Tree Blob */
+
+pub const DTB_REQUEST: [u64; 2] = [0xb40ddb48fb54bac7, 0x545081493f81ffb7];
+
+pub struct DtbResponse {
+    revision: u64,
+    dtb_ptr: *u8,
+}
+
+pub struct DtbRequest {
+    magic: [u64; 2],
+    id: [u64; 2],
+    revision: u64,
+    response: *DtbResponse,
+}

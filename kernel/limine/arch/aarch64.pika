@@ -1,0 +1,22 @@
+
+pub type GotoAddress = fn(*SmpInfo);
+
+pub enum SmpFlags : u32 {
+}
+
+pub struct SmpInfo {
+    processor_id: u32,
+    gic_iface_no: u32,
+    mpidr: u64,
+    reserved: u64,
+    goto_address: GotoAddress,
+    extra_argument: u64,
+}
+
+pub struct SmpResponse {
+    revision: u64,
+    flags: u32,
+    bsp_mpidr: u64,
+    cpu_count: u64,
+    cpus: **SmpInfo,
+}

@@ -1,0 +1,21 @@
+pub enum SmpFlags : u32 {
+    X2APIC = 0x01,
+}
+
+pub type GotoAddress = fn(*SmpInfo);
+
+pub struct SmpInfo {
+    processor_id: u32,
+    lapic_id: u32,
+    reserved: u64,
+    goto_address: GotoAddress,
+    extra_argument: u64,
+}
+
+pub struct SmpResponse {
+    revision: u64,
+    flags: u32,
+    bsp_lapic_id: u32,
+    cpu_count: u64,
+    cpus: **SmpInfo,
+}
