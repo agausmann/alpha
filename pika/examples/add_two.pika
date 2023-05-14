@@ -1,0 +1,5 @@
+// Test comment
+/* Test comment 2 */
+fn add_two(x: i32) -> i32 {
+    x + 2
+}
