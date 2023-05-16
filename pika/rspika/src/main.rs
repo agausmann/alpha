@@ -1,7 +1,7 @@
 use chumsky::{prelude::*, text};
 
 fn main() -> anyhow::Result<()> {
-    let source = std::fs::read_to_string("../examples/add_two.pika")?;
+    let source = std::fs::read_to_string("../examples/kattis/bijele.pika")?;
     let tokens = match tokenize().parse(source) {
         Ok(x) => x,
         Err(errs) => {
@@ -30,8 +30,11 @@ fn main() -> anyhow::Result<()> {
 fn tokenize() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
     let token = choice((
         text::keyword("fn").to(Token::Fn),
+        text::keyword("struct").to(Token::Struct),
         just("->").to(Token::RightArrow),
         just("+").to(Token::Plus),
+        just("-").to(Token::Minus),
+        just(".").to(Token::Dot),
         just(",").to(Token::Comma),
         just(":").to(Token::Colon),
         just("(").to(Token::OpenParen),
@@ -66,23 +69,44 @@ fn module() -> impl Parser<Token, Module, Error = Simple<Token>> {
         Token::IntLiteral(x) => x,
     };
 
-    let factor = choice((
-        ident.map(Factor::Ident),
-        int_literal.map(Factor::IntLiteral),
-    ));
-    // TODO unary ops
-    let term = factor.map(|factor| Term {
-        ops: vec![],
-        factor,
+    let expr = recursive(|expr| {
+        let field_init = ident
+            .then_ignore(just(Token::Colon))
+            .then(expr)
+            .map(|(name, value)| FieldInit { name, value });
+
+        let struct_init = ident
+            .then_ignore(just(Token::OpenBracket))
+            .then(field_init.separated_by(just(Token::Comma)).allow_trailing())
+            .then_ignore(just(Token::CloseBracket))
+            .map(|(name, fields)| StructInit { name, fields });
+
+        let factor = choice((
+            struct_init.map(Factor::StructInit),
+            ident.map(Factor::Ident),
+            int_literal.map(Factor::IntLiteral),
+        ));
+        let suffix_op = just(Token::Dot)
+            .ignore_then(ident)
+            .map(|field_name| SuffixOp::FieldAccess(field_name));
+        // TODO prefix ops
+        let term = factor
+            .then(suffix_op.repeated())
+            .map(|(factor, suffixes)| Term {
+                prefixes: vec![],
+                factor,
+                suffixes,
+            });
+
+        let binary_op = select! {
+            Token::Plus => BinaryOp::Plus,
+            Token::Minus => BinaryOp::Minus,
+        };
+
+        term.clone()
+            .then((binary_op.then(term)).repeated())
+            .map(|(head, tail)| Expr { head, tail })
     });
-
-    let binary_op = select! {
-        Token::Plus => BinaryOp::Plus,
-    };
-
-    let expr = term
-        .then((binary_op.then(term)).repeated())
-        .map(|(head, tail)| Expr { head, tail });
 
     let type_name = ident.map(Type::Ident);
 
@@ -112,7 +136,24 @@ fn module() -> impl Parser<Token, Module, Error = Simple<Token>> {
             return_type,
             body,
         });
-    let item = fn_item.map(Item::Fn);
+
+    let field =
+        ident
+            .then_ignore(just(Token::Colon))
+            .then(type_name)
+            .map(|(field_name, field_type)| Field {
+                field_name,
+                field_type,
+            });
+
+    let struct_item = just(Token::Struct)
+        .ignore_then(ident)
+        .then_ignore(just(Token::OpenBracket))
+        .then(field.separated_by(just(Token::Comma)).allow_trailing())
+        .then_ignore(just(Token::CloseBracket))
+        .map(|(name, fields)| StructItem { name, fields });
+
+    let item = choice((fn_item.map(Item::Fn), struct_item.map(Item::Struct)));
     item.repeated()
         .then_ignore(end())
         .map(|items| Module { items })
@@ -123,9 +164,12 @@ enum Token {
     Ident(Ident),
     IntLiteral(IntLiteral),
     Fn,
+    Struct,
     RightArrow,
     Plus,
+    Minus,
     Colon,
+    Dot,
     Comma,
     OpenParen,
     CloseParen,
@@ -147,6 +191,7 @@ struct Module {
 #[derive(Debug, Clone)]
 enum Item {
     Fn(FnItem),
+    Struct(StructItem),
 }
 
 #[derive(Debug, Clone)]
@@ -181,20 +226,52 @@ struct Expr {
 
 #[derive(Debug, Clone)]
 struct Term {
-    ops: Vec<UnaryOp>,
+    prefixes: Vec<PrefixOp>,
     factor: Factor,
+    suffixes: Vec<SuffixOp>,
 }
 
 #[derive(Debug, Clone)]
 enum Factor {
     Ident(Ident),
     IntLiteral(IntLiteral),
+    StructInit(StructInit),
 }
 
 #[derive(Debug, Clone)]
-enum UnaryOp {}
+struct StructInit {
+    name: Ident,
+    fields: Vec<FieldInit>,
+}
+
+#[derive(Debug, Clone)]
+struct FieldInit {
+    name: Ident,
+    value: Expr,
+}
+
+#[derive(Debug, Clone)]
+enum PrefixOp {}
+
+#[derive(Debug, Clone)]
+enum SuffixOp {
+    FieldAccess(Ident),
+}
 
 #[derive(Debug, Clone)]
 enum BinaryOp {
     Plus,
+    Minus,
+}
+
+#[derive(Debug, Clone)]
+struct StructItem {
+    name: Ident,
+    fields: Vec<Field>,
+}
+
+#[derive(Debug, Clone)]
+struct Field {
+    field_name: Ident,
+    field_type: Type,
 }
