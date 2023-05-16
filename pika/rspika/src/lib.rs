@@ -114,7 +114,6 @@ fn module() -> impl Parser<Token, Module, Error = Simple<Token>> {
                 .then_ignore(just(Token::CloseBracket))
                 .map(SuffixOp::ArrayIndex),
         ));
-        // TODO prefix ops
         let term = prefix_op
             .repeated()
             .then(factor)
