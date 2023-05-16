@@ -1,32 +1,5 @@
 use chumsky::{prelude::*, text};
 
-fn main() -> anyhow::Result<()> {
-    let source = std::fs::read_to_string("../examples/kattis/bijele.pika")?;
-    let tokens = match tokenize().parse(source) {
-        Ok(x) => x,
-        Err(errs) => {
-            for err in errs {
-                eprintln!("{:?}", err);
-            }
-            return Ok(());
-        }
-    };
-
-    let module = match module().parse(tokens) {
-        Ok(x) => x,
-        Err(errs) => {
-            for err in errs {
-                eprintln!("{:?}", err);
-            }
-            return Ok(());
-        }
-    };
-
-    println!("{:#?}", module);
-
-    Ok(())
-}
-
 fn tokenize() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
     let token = choice((
         text::keyword("fn").to(Token::Fn),
@@ -274,4 +247,24 @@ struct StructItem {
 struct Field {
     field_name: Ident,
     field_type: Type,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_module(source: &str) {
+        let tokens = tokenize().parse(source).unwrap();
+        module().parse(tokens).unwrap();
+    }
+
+    #[test]
+    fn add_two() {
+        parse_module(include_str!("examples/add_two.pika"));
+    }
+
+    #[test]
+    fn bijele() {
+        parse_module(include_str!("examples/kattis/bijele.pika"));
+    }
 }
