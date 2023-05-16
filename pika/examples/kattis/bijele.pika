@@ -1,0 +1,19 @@
+struct PieceSet {
+	kings: i32,
+	queens: i32,
+	rooks: i32,
+	bishops: i32,
+	knights: i32,
+	pawns: i32,
+}
+
+fn bijele(pieces: PieceSet) -> PieceSet {
+	PieceSet {
+		kings: 1 - pieces.kings,
+		queens: 1 - pieces.queens,
+		rooks: 2 - pieces.rooks,
+		bishops: 2 - pieces.bishops,
+		knights: 2 - pieces.knights,
+		pawns: 8 - pieces.pawns,
+	}
+}

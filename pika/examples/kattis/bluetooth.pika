@@ -1,0 +1,31 @@
+enum Tooth {
+	Healthy,
+	Blue,
+	Missing,
+}
+
+// [left_right][lower_upper][tooth_index]
+fn bluetooth(teeth: [[[Tooth; 8]; 2]; 2]) -> i32
+{
+	let mut blue = [false; 2];
+	let mut jaw = [[false; 2]; 2];
+
+	for i in 0..2 {
+		for j in 0..2 {
+			for k in 0..8 {
+				if teeth[i][j][k] == Tooth::Blue {
+					blue[i] = true;
+				} else if teeth[i][j][k] == Tooth::Healthy {
+					jaw[i][j] = true;
+				}
+			}
+		}
+	}
+
+	for i in 0..2 {
+		if !blue[i] && jaw[i][0] && jaw[i][1] {
+			return i;
+		}
+	}
+	return 2;
+}
